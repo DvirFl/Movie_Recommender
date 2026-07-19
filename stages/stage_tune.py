@@ -82,11 +82,31 @@ def run(
         trainer_mod = importlib.import_module(".".join(parts[:-1]) + ".trainer")
         train_fn = trainer_mod.train
 
-        def objective(hparams: dict) -> float:
+        # def objective(hparams: dict) -> float:
+        #     arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
+        #     loss = loss_entry.cls()
+        #     sweep_hparams = {**hparams,
+        #                      "n_epochs": max(1, hparams.get("n_epochs", 2) // 4)}
+        #     run_id = train_fn(
+        #         arch, loss, train_ds, val_ds,
+        #         hparams=sweep_hparams,
+        #         experiment_name=f"hparam/{key}",
+        #         save_to_minio=False,
+        #         mlflow_tags={"sweep_trial": "true"},
+        #     )
+        #     client = mlflow.tracking.MlflowClient()
+        #     run = client.get_run(run_id)
+        #     return float(run.data.metrics.get("best_val_loss", 9999.0))
+
+        def objective(hparams: dict) -> list[float]:
             arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
             loss = loss_entry.cls()
-            sweep_hparams = {**hparams,
-                             "n_epochs": max(1, hparams.get("n_epochs", 2) // 4)}
+            sweep_hparams = {
+                **hparams,
+                "n_epochs": max(1, hparams.get("n_epochs", 2) // 4),
+                "sdft_weight": 0.0,   # skip SDFT during sweep
+                "batch_size": 512,    # cap batch size during sweep
+            }
             run_id = train_fn(
                 arch, loss, train_ds, val_ds,
                 hparams=sweep_hparams,
@@ -95,9 +115,9 @@ def run(
                 mlflow_tags={"sweep_trial": "true"},
             )
             client = mlflow.tracking.MlflowClient()
-            run = client.get_run(run_id)
-            return float(run.data.metrics.get("best_val_loss", 9999.0))
-
+            history = client.get_metric_history(run_id, "val_loss")
+            return [m.value for m in sorted(history, key=lambda m: m.step)] or [9999.0]
+        
         # Override n_trials if supplied
         if n_trials is not None:
             import optuna
