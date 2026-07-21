@@ -1,8 +1,28 @@
 services:
 
+  # ── Application PostgreSQL (raw / features / serving / pipeline schemas) ──
+  postgres:
+    image: postgres:16
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${RECSYS_PG_USER:-postgres}
+      POSTGRES_PASSWORD: ${RECSYS_PG_PASSWORD:-postgres}
+      POSTGRES_DB: ${RECSYS_PG_DB:-movielens}
+    volumes:
+      - postgres_app_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${RECSYS_PG_USER:-postgres} -d ${RECSYS_PG_DB:-movielens}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
   # ── MLflow tracking server ─────────────────────────────────────────────
   mlflow:
-    image: ghcr.io/mlflow/mlflow:v2.13.0
+    build:
+      context: .
+      dockerfile: Dockerfile.mlflow
     restart: unless-stopped
     ports:
       - "5000:5000"
@@ -12,11 +32,11 @@ services:
       AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
     command: >
       mlflow server
-      --backend-store-uri postgresql+psycopg2://${MLFLOW_PG_USER}:${MLFLOW_PG_PASSWORD}@postgres-mlflow:5432/${MLFLOW_PG_DB}
+      --backend-store-uri postgresql+psycopg2://${MLFLOW_PG_USER:-mlflow}:${MLFLOW_PG_PASSWORD:-mlflow}@postgres-mlflow:5432/${MLFLOW_PG_DB:-mlflow}
       --default-artifact-root s3://model-checkpoints
       --host 0.0.0.0
       --port 5000
-      --workers 8
+      --workers 4
       --gunicorn-opts "--timeout 300 --worker-connections 200 --keep-alive 10"
     depends_on:
       postgres-mlflow:
@@ -28,7 +48,9 @@ services:
       interval: 10s
       timeout: 5s
       retries: 5
-
+      start_period: 20s
+      
+      
   # ── Dedicated PostgreSQL for MLflow + Optuna ───────────────────────────
   postgres-mlflow:
     image: postgres:16
@@ -54,14 +76,14 @@ services:
       interval: 5s
       timeout: 3s
       retries: 10
-
-  # ── MinIO object store ─────────────────────────────────────────────────
+      
+# ── MinIO object store ─────────────────────────────────────────────────
   minio:
     image: minio/minio:latest
     restart: unless-stopped
     ports:
-      - "9000:9000"          # S3 API
-      - "9001:9001"          # Console UI
+      - "9002:9000"          # Host 9002 -> Container 9000 (Avoids 9000 conflict!)
+      - "9003:9001"          # Console UI
     environment:
       MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
       MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
@@ -85,12 +107,47 @@ services:
       MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
     entrypoint: >
       /bin/sh -c "
-        mc alias set local http://minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY &&
+        until mc alias set local http://minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY; do
+          echo 'Waiting for MinIO network/service...'
+          sleep 2
+        done &&
         mc mb --ignore-existing local/model-checkpoints &&
         mc mb --ignore-existing local/mlflow-artifacts &&
         echo 'Buckets ready.'
       "
+      
+  # ── Application (ingest/tune/train/serve — see entrypoint.sh) ──────────
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    restart: unless-stopped
+    ports:
+      - "8000:8000"
+    environment:
+      RECSYS_DB_URL: postgresql+psycopg2://${RECSYS_PG_USER:-postgres}:${RECSYS_PG_PASSWORD:-postgres}@postgres:5432/${RECSYS_PG_DB:-movielens}
+      MLFLOW_TRACKING_URI: http://mlflow:5000
+      MLFLOW_S3_ENDPOINT_URL: http://minio:9000
+      MINIO_ENDPOINT: minio:9000
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      MOVIELENS_DATA_DIR: /data/movielens
+      OPTUNA_STORAGE_URL: postgresql+psycopg2://${MLFLOW_PG_USER}:${MLFLOW_PG_PASSWORD}@postgres-mlflow:5432/optuna_studies
+      INGEST_MODE: upsert
+      PORT: 8000
+    volumes:
+      - recsys_state:/app/state              # persists the "already trained" marker
+      - ./data:/data/movielens:ro             # put your ml-*.zip / extracted dir here
+    depends_on:
+      postgres:
+        condition: service_healthy
+      mlflow:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
 
 volumes:
+  postgres_app_data:
   postgres_mlflow_data:
   minio_data:
+  recsys_state:

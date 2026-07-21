@@ -1,6 +1,6 @@
 """ETL Stage 1: Ingest MovieLens data into the raw.* PostgreSQL schema.
 
-Handles every official MovieLens dataset variant automatically via a unified manifest.
+Handles every official MovieLens dataset variant automatically via a chunked stream.
 """
 from __future__ import annotations
 
@@ -8,6 +8,7 @@ import logging
 import shutil
 import tempfile
 import zipfile
+from collections import defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -49,8 +50,6 @@ class IngestReport:
     def counts(self) -> dict[str, int]:
         return self.ingested
 
-from collections import defaultdict
-
 
 # ---------------------------------------------------------------------------
 # Dataset Manifest & Mapping Config
@@ -77,7 +76,7 @@ DATASET_MANIFEST = {
     "links.csv": DatasetSpec("modern", "raw.links", RawLink, ",", ["movie_id", "imdb_id", "tmdb_id"], {"movieId": "movie_id", "imdbId": "imdb_id", "tmdbId": "tmdb_id"}),
     "genome-scores.csv": DatasetSpec("modern", "raw.genome_scores", RawGenomeScore, ",", ["movie_id", "tag_id", "relevance"], {"movieId": "movie_id", "tagId": "tag_id"}),
     
-    # ── Legacy ml-1m ──
+    # ── Legacy ml-1m & ml-10m ──
     "ratings.dat": DatasetSpec("ml-1m", "raw.ratings", RawRating, "::", ["user_id", "movie_id", "rating", "timestamp"], engine="python", encoding="latin-1", header=None),
     "movies.dat": DatasetSpec("ml-1m", "raw.movies", RawMovie, "::", ["movie_id", "title", "genres"], engine="python", encoding="latin-1", header=None),
     
@@ -103,11 +102,9 @@ CONFLICT_TARGET_KEYS = {
 def _detect_variant(files: list[Path]) -> str:
     names = {f.name.lower() for f in files}
     if "u.data" in names: return "ml-100k"
-    if "ratings.dat" in names: return "ml-1m"
+    if "ratings.dat" in names: return "ml-1m / ml-10m"
     if "genome-scores.csv" in names: return "ml-25m"
-    if "ratings.csv" in names:
-        # Check size or other distinct files if needed, but ml-latest-small is safe default here
-        return "modern (small/latest)"
+    if "ratings.csv" in names: return "modern (small/latest)"
     return "unknown"
 
 def _extract_zip(zip_path: Path, dest: Path) -> list[Path]:
@@ -121,20 +118,19 @@ def _extract_zip(zip_path: Path, dest: Path) -> list[Path]:
 
 
 # ---------------------------------------------------------------------------
-# Parser & Writer
+# Chunked Parser & Writer
 # ---------------------------------------------------------------------------
 
-def _parse_file(path: Path, spec: DatasetSpec) -> pd.DataFrame:
-    """Reads a file into a standardized DataFrame based on its DatasetSpec."""
+def _process_file_in_chunks(path: Path, spec: DatasetSpec, mode: str, chunksize: int = 100000) -> int:
+    """Streams large dataset files in memory-safe chunks."""
     kwargs = {
         "sep": spec.delimiter,
         "encoding": spec.encoding,
         "engine": spec.engine,
         "header": spec.header,
+        "chunksize": chunksize,
     }
     
-    # The low_memory option is strictly for the C-engine.
-    # The Python engine (used for ml-1m's '::' delimiter) will crash if it is present.
     if spec.engine == "c":
         kwargs["low_memory"] = False
         
@@ -148,58 +144,47 @@ def _parse_file(path: Path, spec: DatasetSpec) -> pd.DataFrame:
     if path.name.lower() == "links.csv":
         kwargs["dtype"] = str
 
-    df = pd.read_csv(path, **kwargs)
-
-    # Standardize headers
-    if spec.rename_map:
-        df = df.rename(columns=spec.rename_map)
-
-    # Fill missing required columns for legacy files
-    if path.name.lower() == "u.item":
-        df["genres"] = "(no genres listed)"
-
-    # Clean missing values for Links
-    if path.name.lower() == "links.csv":
-        df["movie_id"] = df["movie_id"].astype(int)
-        for col in ["imdb_id", "tmdb_id"]:
-            if col in df.columns:
-                df[col] = df[col].where(df[col].notna() & (df[col] != "nan"), None)
-
-    # Drop any row missing natural keys
-    primary_keys = CONFLICT_TARGET_KEYS.get(spec.target_table, [])
-    if primary_keys:
-        df = df.dropna(subset=primary_keys)
-
-    return df
-
-def _write_batch(df: pd.DataFrame, spec: DatasetSpec, mode: str, batch_size: int = 1500) -> int:
-    """Safely upserts DataFrame records into the PostgreSQL database."""
-    if df.empty:
-        return 0
-
     table_obj = spec.model_cls.__mapper__.local_table
     conflict_cols = CONFLICT_TARGET_KEYS.get(spec.target_table, [])
-    records = df.to_dict(orient="records")
-    
-    update_col_names = [
-        c.name for c in table_obj.columns 
-        if c.name not in set(conflict_cols) and c.name != "id" and not c.primary_key
-    ]
+    primary_keys = CONFLICT_TARGET_KEYS.get(spec.target_table, [])
 
     total_inserted = 0
+    first_chunk = True
+
     with get_session() as session:
+        # If replace mode, clear table once at the beginning
         if mode == "replace":
             session.execute(text(f"DELETE FROM {spec.target_table}"))
 
-        for i in range(0, len(records), batch_size):
-            batch = records[i: i + batch_size]
-            
-            if mode == "replace":
-                session.bulk_insert_mappings(spec.model_cls, batch)
-                total_inserted += len(batch)
+        for chunk_idx, df in enumerate(pd.read_csv(path, **kwargs)):
+            if df.empty:
                 continue
 
-            insert_stmt = pg_insert(table_obj).values(batch)
+            if spec.rename_map:
+                df = df.rename(columns=spec.rename_map)
+
+            if path.name.lower() == "u.item":
+                df["genres"] = "(no genres listed)"
+
+            if path.name.lower() == "links.csv":
+                df["movie_id"] = df["movie_id"].astype(int)
+                for col in ["imdb_id", "tmdb_id"]:
+                    if col in df.columns:
+                        df[col] = df[col].where(df[col].notna() & (df[col] != "nan"), None)
+
+            if primary_keys:
+                df = df.dropna(subset=primary_keys)
+
+            if df.empty:
+                continue
+
+            records = df.to_dict(orient="records")
+            update_col_names = [
+                c.name for c in table_obj.columns 
+                if c.name not in set(conflict_cols) and c.name != "id" and not c.primary_key
+            ]
+
+            insert_stmt = pg_insert(table_obj).values(records)
             
             if mode == "upsert" and conflict_cols and update_col_names:
                 update_dict = {col: getattr(insert_stmt.excluded, col) for col in update_col_names}
@@ -208,9 +193,12 @@ def _write_batch(df: pd.DataFrame, spec: DatasetSpec, mode: str, batch_size: int
                 stmt = insert_stmt.on_conflict_do_nothing()
 
             session.execute(stmt)
-            total_inserted += len(batch)
+            total_inserted += len(records)
+            
+            if chunk_idx % 10 == 0:
+                logger.info("[ingest]   → Processed chunk %d (%d total rows so far) for %s", chunk_idx, total_inserted, path.name)
 
-        # Update Pipeline Trigger Watermark
+        # Update watermark / metadata
         result = session.execute(text(f"SELECT MAX(inserted_at) FROM {spec.target_table}")).scalar()
         wm = session.get(TriggerWatermark, spec.target_table)
         if not wm:
@@ -235,11 +223,29 @@ def ingest_all(source: str | Path, mode: str = "upsert") -> IngestReport:
 
     tmp_dir: str | None = None
     try:
-        if source.suffix.lower() == ".zip":
+        # 1. Single Zip file provided directly
+        if source.is_file() and source.suffix.lower() == ".zip":
             tmp_dir = tempfile.mkdtemp(prefix="movielens_ingest_")
             all_files = _extract_zip(source, Path(tmp_dir))
+
+        # 2. Directory provided
         elif source.is_dir():
             all_files = [p for p in source.rglob("*") if p.is_file()]
+            known_targets = set(DATASET_MANIFEST.keys())
+            
+            # Check if directory already contains unzipped dataset files
+            has_unzipped = any(p.name.lower() in known_targets for p in all_files)
+
+            # If no unzipped dataset files are found, extract zip archives inside the directory
+            if not has_unzipped:
+                zip_files = sorted([p for p in source.glob("*.zip")])
+                if zip_files:
+                    tmp_dir = tempfile.mkdtemp(prefix="movielens_ingest_")
+                    all_files = []
+                    for zf in zip_files:
+                        logger.info("[ingest] Auto-extracting found archive: %s", zf.name)
+                        extracted = _extract_zip(zf, Path(tmp_dir))
+                        all_files.extend(extracted)
         else:
             all_files = [source]
 
@@ -260,12 +266,10 @@ def ingest_all(source: str | Path, mode: str = "upsert") -> IngestReport:
                 continue
 
             try:
-                logger.info("[ingest] Parsing %s -> %s", path.name, spec.target_table)
-                df = _parse_file(path, spec)
-                
-                count = _write_batch(df, spec, mode)
-                report.ingested[spec.target_table] += count  # Fixed accumulator bug
-                logger.info("[ingest]   → Upserted %d rows into %s", count, spec.target_table)
+                logger.info("[ingest] Streaming & parsing %s -> %s", path.name, spec.target_table)
+                count = _process_file_in_chunks(path, spec, mode)
+                report.ingested[spec.target_table] += count
+                logger.info("[ingest]   → Successfully ingested %d rows into %s", count, spec.target_table)
 
             except Exception as e:
                 report.errors[path.name] = str(e)

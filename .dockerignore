@@ -1,0 +1,23 @@
+# Ignore local datasets / large files
+data/
+*.zip
+*.tar.gz
+*.parquet
+
+# Ignore local Python artifacts
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+.env
+
+# Ignore git & IDE configs
+.git/
+.gitignore
+.idea/
+.vscode/
+
+# Ignore Docker volumes or local state
+state/
