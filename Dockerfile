@@ -1,7 +1,7 @@
 FROM python:3.11-slim
 
 # System deps: libpq for psycopg2, build tools for faiss/torch wheels if needed
-RUN apt-get update && apt-get install -y --no-install-recommends \
+RUN apt-get update && apt-get install -y --no-install-recommends git \
         libpq-dev gcc curl \
     && rm -rf /var/lib/apt/lists/*
 

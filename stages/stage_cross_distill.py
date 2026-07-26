@@ -57,12 +57,14 @@ def run(
     itf = load_item_features()
     n_users = max(uf.keys()) + 1
     n_items = max(itf.keys()) + 1
+    n_genres = len(next(iter(itf.values()))["genre_multihot"])
+
     train_ds = MovieLensDataset(splits_raw["train"], uf, itf, split="train")
     loader   = DataLoader(train_ds, batch_size=batch_size, shuffle=True, num_workers=2)
 
     device = get_device()
     arch_models = {
-        ae.name: ae.cls(n_users=n_users, n_items=n_items)
+        ae.name: ae.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
         for ae in unique_archs
     }
 

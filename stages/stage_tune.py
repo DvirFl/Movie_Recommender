@@ -3,8 +3,12 @@ from __future__ import annotations
 
 import logging
 from dataclasses import dataclass, field
+import os
+import json
 
 logger = logging.getLogger(__name__)
+
+HPARAMS_CACHE_PATH = "state/best_hparams.json"
 
 
 @dataclass
@@ -57,7 +61,32 @@ def run(
         logger.warning("[tune] No enabled combinations match the requested filters.")
         return TuneResult()
 
-    # Load data once for all combos
+    # 1. Load existing cache if available
+    cached_hparams = {}
+    if os.path.exists(HPARAMS_CACHE_PATH):
+        try:
+            with open(HPARAMS_CACHE_PATH, "r") as f:
+                cached_hparams = json.load(f)
+            logger.info("[tune] Loaded existing hyperparameters cache from %s", HPARAMS_CACHE_PATH)
+        except Exception as e:
+            logger.warning("[tune] Failed to read cache file %s: %s. Re-running sweep.", HPARAMS_CACHE_PATH, e)
+
+    result = TuneResult(best_hparams=cached_hparams)
+    
+    # Filter out combinations that already have cached hyperparameters
+    combos_to_tune = []
+    for arch_entry, loss_entry in combos:
+        key = f"{arch_entry.name}_{loss_entry.name}"
+        if key in result.best_hparams:
+            logger.info("[tune] ⏭️ Skipping %s — cached hyperparameters already exist.", key)
+        else:
+            combos_to_tune.append((arch_entry, loss_entry))
+
+    if not combos_to_tune:
+        logger.info("[tune] 🎉 All requested combinations already have tuned hyperparameters. Skipping all sweeps!")
+        return result
+
+    # Load data once for remaining combos that actually need tuning
     splits_raw = load_split_dataframes()
     uf = load_user_features()
     itf = load_item_features()
@@ -65,38 +94,19 @@ def run(
     n_items = max(itf.keys()) + 1
 
     sample_item = next(iter(itf.values()))
-    n_genres = len(sample_item['genre_multihot'])
-    # logger.info("[tune] n_genres=%d from item_id=%s", n_genres, next(iter(itf)))
+    n_genres = len(sample_item.get('genre_multihot', sample_item.get('genres', [])))
 
     train_ds = MovieLensDataset(splits_raw["train"], uf, itf, split="train")
     val_ds   = MovieLensDataset(splits_raw["val"],   uf, itf, split="val")
 
-    result = TuneResult()
-
-    for arch_entry, loss_entry in combos:
+    for arch_entry, loss_entry in combos_to_tune:
         key = f"{arch_entry.name}_{loss_entry.name}"
-        logger.info("[tune] Sweeping %s ...", key)
+        logger.info("[tune] 🔍 Sweeping %s ...", key)
 
         # Resolve trainer for this architecture
         parts = arch_entry.cls.__module__.split(".")
         trainer_mod = importlib.import_module(".".join(parts[:-1]) + ".trainer")
         train_fn = trainer_mod.train
-
-        # def objective(hparams: dict) -> float:
-        #     arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
-        #     loss = loss_entry.cls()
-        #     sweep_hparams = {**hparams,
-        #                      "n_epochs": max(1, hparams.get("n_epochs", 2) // 4)}
-        #     run_id = train_fn(
-        #         arch, loss, train_ds, val_ds,
-        #         hparams=sweep_hparams,
-        #         experiment_name=f"hparam/{key}",
-        #         save_to_minio=False,
-        #         mlflow_tags={"sweep_trial": "true"},
-        #     )
-        #     client = mlflow.tracking.MlflowClient()
-        #     run = client.get_run(run_id)
-        #     return float(run.data.metrics.get("best_val_loss", 9999.0))
 
         def objective(hparams: dict) -> list[float]:
             arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
@@ -149,6 +159,12 @@ def run(
             )
 
         result.best_hparams[key] = best
-        logger.info("[tune] Best hparams for %s: %s", key, best)
+        logger.info("[tune] ✅ Best hparams for %s: %s", key, best)
+
+    # 2. Persist updated results to disk cache
+    os.makedirs(os.path.dirname(HPARAMS_CACHE_PATH), exist_ok=True)
+    with open(HPARAMS_CACHE_PATH, "w") as f:
+        json.dump(result.best_hparams, f, indent=4)
+    logger.info("[tune] Saved hyperparameters cache to %s", HPARAMS_CACHE_PATH)
 
     return result

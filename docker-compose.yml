@@ -12,11 +12,81 @@ services:
       POSTGRES_DB: ${RECSYS_PG_DB:-movielens}
     volumes:
       - postgres_app_data:/var/lib/postgresql/data
+    command: >
+      postgres
+      -c checkpoint_timeout=15min
+      -c max_wal_size=4GB
+      -c checkpoint_completion_target=0.9
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${RECSYS_PG_USER:-postgres} -d ${RECSYS_PG_DB:-movielens}"]
       interval: 5s
       timeout: 3s
       retries: 10
+
+  # ── Dedicated PostgreSQL for MLflow + Optuna ───────────────────────────
+  postgres-mlflow:
+    image: postgres:16
+    restart: unless-stopped
+    ports:
+      - "5433:5432"          # 5433 on host — avoids clash with your app's PG on 5432
+    environment:
+      POSTGRES_USER: ${MLFLOW_PG_USER:-mlflow}
+      POSTGRES_PASSWORD: ${MLFLOW_PG_PASSWORD:-mlflow}
+      POSTGRES_DB: ${MLFLOW_PG_DB:-mlflow}
+    volumes:
+      - postgres_mlflow_data:/var/lib/postgresql/data
+      - ./docker/postgres-mlflow/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
+    command: >
+      postgres
+      -c max_connections=300
+      -c shared_buffers=256MB
+      -c effective_cache_size=768MB
+      -c work_mem=4MB
+      -c checkpoint_completion_target=0.9
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${MLFLOW_PG_USER:-mlflow} -d ${MLFLOW_PG_DB:-mlflow}"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # ── MinIO object store ─────────────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    restart: unless-stopped
+    ports:
+      - "9002:9000"          # Host 9002 -> Container 9000 (Avoids 9000 conflict!)
+      - "9003:9001"          # Console UI
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY:-minioadmin}
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ── MinIO bucket initialisation (runs once then exits) ─────────────────
+  minio-init:
+    image: minio/mc:latest
+    depends_on:
+      minio:
+        condition: service_healthy
+    environment:
+      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY:-minioadmin}
+      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY:-minioadmin}
+    entrypoint: >
+      /bin/sh -c "
+        until mc alias set local http://minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY; do
+          echo 'Waiting for MinIO network/service...'
+          sleep 2
+        done &&
+        mc mb --ignore-existing local/model-checkpoints &&
+        mc mb --ignore-existing local/mlflow-artifacts &&
+        echo 'Buckets ready.'
+      "
 
   # ── MLflow tracking server ─────────────────────────────────────────────
   mlflow:
@@ -28,8 +98,8 @@ services:
       - "5000:5000"
     environment:
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
-      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
     command: >
       mlflow server
       --backend-store-uri postgresql+psycopg2://${MLFLOW_PG_USER:-mlflow}:${MLFLOW_PG_PASSWORD:-mlflow}@postgres-mlflow:5432/${MLFLOW_PG_DB:-mlflow}
@@ -49,73 +119,7 @@ services:
       timeout: 5s
       retries: 5
       start_period: 20s
-      
-      
-  # ── Dedicated PostgreSQL for MLflow + Optuna ───────────────────────────
-  postgres-mlflow:
-    image: postgres:16
-    restart: unless-stopped
-    ports:
-      - "5433:5432"          # 5433 on host — avoids clash with your app's PG on 5432
-    environment:
-      POSTGRES_USER: ${MLFLOW_PG_USER}
-      POSTGRES_PASSWORD: ${MLFLOW_PG_PASSWORD}
-      POSTGRES_DB: ${MLFLOW_PG_DB}
-    volumes:
-      - postgres_mlflow_data:/var/lib/postgresql/data
-      - ./docker/postgres-mlflow/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
-    command: >
-      postgres
-      -c max_connections=300
-      -c shared_buffers=256MB
-      -c effective_cache_size=768MB
-      -c work_mem=4MB
-      -c checkpoint_completion_target=0.9
-    healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${MLFLOW_PG_USER} -d ${MLFLOW_PG_DB}"]
-      interval: 5s
-      timeout: 3s
-      retries: 10
-      
-# ── MinIO object store ─────────────────────────────────────────────────
-  minio:
-    image: minio/minio:latest
-    restart: unless-stopped
-    ports:
-      - "9002:9000"          # Host 9002 -> Container 9000 (Avoids 9000 conflict!)
-      - "9003:9001"          # Console UI
-    environment:
-      MINIO_ROOT_USER: ${MINIO_ACCESS_KEY}
-      MINIO_ROOT_PASSWORD: ${MINIO_SECRET_KEY}
-    volumes:
-      - minio_data:/data
-    command: server /data --console-address ":9001"
-    healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
 
-  # ── MinIO bucket initialisation (runs once then exits) ─────────────────
-  minio-init:
-    image: minio/mc:latest
-    depends_on:
-      minio:
-        condition: service_healthy
-    environment:
-      MINIO_ACCESS_KEY: ${MINIO_ACCESS_KEY}
-      MINIO_SECRET_KEY: ${MINIO_SECRET_KEY}
-    entrypoint: >
-      /bin/sh -c "
-        until mc alias set local http://minio:9000 $$MINIO_ACCESS_KEY $$MINIO_SECRET_KEY; do
-          echo 'Waiting for MinIO network/service...'
-          sleep 2
-        done &&
-        mc mb --ignore-existing local/model-checkpoints &&
-        mc mb --ignore-existing local/mlflow-artifacts &&
-        echo 'Buckets ready.'
-      "
-      
   # ── Application (ingest/tune/train/serve — see entrypoint.sh) ──────────
   app:
     build:
@@ -129,15 +133,15 @@ services:
       MLFLOW_TRACKING_URI: http://mlflow:5000
       MLFLOW_S3_ENDPOINT_URL: http://minio:9000
       MINIO_ENDPOINT: minio:9000
-      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY}
-      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY}
+      AWS_ACCESS_KEY_ID: ${MINIO_ACCESS_KEY:-minioadmin}
+      AWS_SECRET_ACCESS_KEY: ${MINIO_SECRET_KEY:-minioadmin}
       MOVIELENS_DATA_DIR: /data/movielens
-      OPTUNA_STORAGE_URL: postgresql+psycopg2://${MLFLOW_PG_USER}:${MLFLOW_PG_PASSWORD}@postgres-mlflow:5432/optuna_studies
+      OPTUNA_STORAGE_URL: postgresql+psycopg2://${MLFLOW_PG_USER:-mlflow}:${MLFLOW_PG_PASSWORD:-mlflow}@postgres-mlflow:5432/optuna_studies
       INGEST_MODE: upsert
       PORT: 8000
     volumes:
       - recsys_state:/app/state              # persists the "already trained" marker
-      - ./data:/data/movielens:ro             # put your ml-*.zip / extracted dir here
+      - ./data:/data/movielens               # maps host data directory containing dataset files to container expected path
     depends_on:
       postgres:
         condition: service_healthy

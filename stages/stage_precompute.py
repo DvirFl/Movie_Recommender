@@ -55,6 +55,7 @@ def run(
     n_users = max(uf.keys()) + 1
     n_items = max(itf.keys()) + 1
     device  = get_device()
+    n_genres = len(next(iter(itf.values()))["genre_multihot"])
 
     result = PrecomputeResult()
 
@@ -62,7 +63,7 @@ def run(
         key = f"{arch_entry.name}_{loss_entry.name}"
         logger.info("[precompute] Running %s ...", key)
 
-        arch = arch_entry.cls(n_users=n_users, n_items=n_items).to(device)
+        arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres).to(device)
         counts = precompute_recommendations(
             model=arch,
             model_name=key,

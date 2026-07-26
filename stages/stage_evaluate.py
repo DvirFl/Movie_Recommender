@@ -61,7 +61,7 @@ def run(
     n_items = max(itf.keys()) + 1
     test_ds  = MovieLensDataset(splits_raw["test"], uf, itf, split="test")
     test_loader = DataLoader(test_ds, batch_size=batch_size, num_workers=2)
-
+    n_genres = len(next(iter(itf.values()))["genre_multihot"])
     device = get_device()
     result = EvaluateResult()
 
@@ -73,7 +73,7 @@ def run(
             key = f"{arch_entry.name}_{loss_entry.name}"
             logger.info("[evaluate] Testing %s ...", key)
 
-            arch    = arch_entry.cls(n_users=n_users, n_items=n_items).to(device)
+            arch    = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres).to(device)
             loss_fn = loss_entry.cls().to(device)
             arch.eval()
             total = 0.0
