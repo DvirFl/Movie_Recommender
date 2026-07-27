@@ -52,7 +52,7 @@ data_sensor_poke_interval: 60
 
 # MinIO
 minio:
-  endpoint: "ninio:9000"
+  endpoint: "minio:9000"
   access_key: "minioadmin"
   secret_key: "minioadmin"
   secure: false
