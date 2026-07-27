@@ -87,13 +87,7 @@ def run(
         hparams = hparams_map.get(key, _defaults)
         logger.info("[train] Training %s  hparams=%s", key, hparams)
 
-        import inspect
-        sig = inspect.signature(arch_entry.cls.__init__)
-        if "n_genres" in sig.parameters:
-            n_genres = len(itf[next(iter(itf))].get("genres", [])) # or however your genres count is accessed, or safely check your item features
-            arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
-        else:
-            arch = arch_entry.cls(n_users=n_users, n_items=n_items)        
+        arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
         loss_fn  = loss_entry.cls()
 
         parts = arch_entry.cls.__module__.split(".")

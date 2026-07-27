@@ -4,7 +4,7 @@
 # First run (no marker file yet, i.e. no trained weights/optimizations
 # persisted from a previous container lifetime):
 #   startup -> ingest -> validate -> featurize -> split -> tune -> train
-#           -> cross_distill -> evaluate -> precompute -> serve
+#            -> cross_distill -> evaluate -> precompute -> serve
 #
 # Subsequent runs (marker present -> models/checkpoints already exist in
 # MinIO/Postgres from a prior run of this same persisted volume):
@@ -18,11 +18,21 @@ mkdir -p "${STATE_DIR}"
 echo "[entrypoint] Waiting for PostgreSQL..."
 python - <<'PY'
 import os, time
-from db.connection import check_connection
+from sqlalchemy import create_engine, text
+
+db_url = os.environ.get("RECSYS_DB_URL") or os.environ.get("DATABASE_URL", "postgresql+psycopg2://postgres:postgres@postgres:5432/movielens")
+print(f"[entrypoint] Connecting to: {db_url}")
+engine = create_engine(db_url)
+
 for _ in range(60):
-    if check_connection():
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("SELECT 1"))
+        print("[entrypoint] PostgreSQL is up!")
         break
-    time.sleep(2)
+    except Exception as e:
+        print(f"PostgreSQL is unavailable - sleeping ({e})")
+        time.sleep(2)
 else:
     raise SystemExit("[entrypoint] PostgreSQL never became reachable.")
 PY

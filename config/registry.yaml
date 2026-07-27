@@ -1,0 +1,74 @@
+# config/registry.yaml
+# Add new architectures or losses here — no code changes needed elsewhere.
+# The pipeline discovers and runs all enabled arch×loss combinations automatically.
+
+losses:
+  - name: TimedecayMSELoss
+    module: training.two_tower.losses
+    class: TimedecayMSELoss
+    enabled: true
+
+  - name: TimedecayInfoNCELoss
+    module: training.infonce.losses
+    class: TimedecayInfoNCELoss
+    enabled: true
+
+architectures:
+  - name: TwoTower
+    module: training.two_tower.towers
+    class: TwoTowerModel
+    compatible_losses:
+      - TimedecayMSELoss
+    enabled: true
+
+  - name: InfoNCEEncoder
+    module: training.infonce.encoders
+    class: InfoNCEModel
+    compatible_losses:
+      - TimedecayInfoNCELoss
+    enabled: true
+
+# Device-specific DataLoader defaults
+device_defaults:
+  cuda:
+    batch_size: 1024
+    num_workers: 4
+    pin_memory: true
+  mps:
+    batch_size: 512
+    num_workers: 0
+    pin_memory: false
+  cpu:
+    batch_size: 256
+    num_workers: 2
+    pin_memory: false
+  xla:
+    batch_size: 512
+    num_workers: 0
+    pin_memory: false
+
+# Trigger watermark poll interval (seconds)
+data_sensor_poke_interval: 60
+
+# MinIO
+minio:
+  endpoint: "localhost:9000"
+  access_key: "minioadmin"
+  secret_key: "minioadmin"
+  secure: false
+  buckets:
+    checkpoints: "model-checkpoints"
+    faiss: "faiss-indices"
+    teachers: "teacher-snapshots"
+    cross_distill: "cross-distill"
+
+# MLflow
+mlflow:
+  tracking_uri: "postgresql+psycopg2://postgres:postgres@localhost:5432/movielens_mlflow"
+  artifact_root: "s3://model-checkpoints"
+
+# Optuna
+optuna:
+  n_trials: 30
+  sampler: "TPE"
+  pruner: "Median"
