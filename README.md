@@ -18,33 +18,74 @@ MLflow, tuned by Optuna, stored in PostgreSQL + MinIO.
 Each stage is a standalone module in `stages/` (callable from `main.py` or an
 Airflow task) that delegates real logic to `etl/`, `training/`, `precompute/`.
 
+## Getting started
+
+### 1. Configure the environment
+
+```bash
+cp .env.example .env
+```
+
+Edit `.env` to set your database URL, MinIO credentials, and MLflow tracking
+URI. `config/env_loader.py` loads this file automatically; shell environment
+variables always take priority over it.
+
+### 2. Get a dataset
+
+Download a MovieLens variant (`ml-latest-small`, `ml-25m`, `ml-1m`, or
+`ml-100k`) from GroupLens and place the `.zip` or extracted folder anywhere
+locally. Pass its path with `--data-dir` (or set `MOVIELENS_DATA_DIR`).
+
+### 3. Start infrastructure and run
+
+```bash
+docker compose up -d                     # mlflow, postgres-mlflow, minio
+python main.py --data-dir ./ml-25m.zip   # full pipeline
+python main.py --stages serve            # API only
+```
+
+### Docker networking note
+
+Inside a container, `localhost` refers to that container only — not your
+host or sibling containers. Reference companion services by their
+`docker-compose.yml` service name instead:
+
+```
+# wrong
+MINIO_ENDPOINT=localhost:9000
+# right
+MINIO_ENDPOINT=minio:9000
+```
+
+## Pipeline stages
+
 ### 1. Ingest (`etl/ingest.py`)
-Accepts a `.zip`, extracted directory, or single file. Auto-detects the
-MovieLens variant (`ml-latest-small`, `ml-25m`, `ml-1m`, `ml-100k`) from
-filenames and dispatches to a per-variant/per-file reader. Writes to
-`raw.{ratings,movies,tags,links,genome_scores}` via batched
-`INSERT ... ON CONFLICT` (upsert / skip / replace modes).
+Accepts a `.zip` file, an extracted directory, or a single file. Auto-detects
+the MovieLens variant from filenames and dispatches to a per-variant reader.
+Writes to `raw.{ratings,movies,tags,links,genome_scores}` via batched
+`INSERT ... ON CONFLICT` (`upsert` / `skip` / `replace` modes).
 
 ### 2. Validate (`etl/validate.py`)
-Schema, null, range, and referential-integrity checks against `raw.*`.
-Hard failures (empty tables, null keys) raise; soft issues (rating out of
-range, orphan movie_ids) are warnings.
+Schema, null, range, and referential-integrity checks against `raw.*`. Hard
+failures (empty tables, null keys) raise; soft issues (out-of-range ratings,
+orphan movie_ids) are logged as warnings.
 
 ### 3. Featurize (`etl/featurize.py`)
 - User features: time-decayed interaction history, genre affinity vector,
   rating count/mean.
 - Item features: genre multi-hot, tag TF-IDF, release year (parsed from
   title).
+
 Written to `features.user_features` / `features.item_features`.
 
 ### 4. Split (`etl/split.py`)
-Global temporal split (sort by timestamp, first 80% train / next 10% val /
+Global temporal split (sort by timestamp: first 80% train / next 10% val /
 last 10% test) — no leakage. Indices in `features.split_indices`.
 
 ### 5. Tune (`training/hparam/tuner.py`, Optuna)
 Per (architecture × loss) combination from the registry, sweeps a search
 space merged from shared + arch-specific + loss-specific spaces
-(`training/hparam/search_spaces.py`). RDB-backed (resumable), only the best
+(`training/hparam/search_spaces.py`). RDB-backed (resumable); only the best
 trial is logged to MLflow.
 
 ### 6. Train (`training/two_tower/trainer.py`, `training/infonce/trainer.py`)
@@ -60,15 +101,14 @@ Both support **within-architecture SDFT** (self-distillation via an EMA
 teacher, analytic-KL warmup) during their own training loop. Checkpoints go
 to MLflow + MinIO.
 
-> **Note:** module filenames under `training/two_tower/` and
-> `training/infonce/` mirror each other (`towers.py`/`encoders.py`,
-> `losses.py`, `trainer.py`) — same contract, independent implementations,
-> no shared weights.
+> Module filenames under `training/two_tower/` and `training/infonce/`
+> mirror each other (`towers.py`/`encoders.py`, `losses.py`, `trainer.py`) —
+> same contract, independent implementations, no shared weights.
 
 ### 7. Cross-distill (`training/distillation/cross_distill.py`)
-After both architectures are trained, each acts as EMA teacher for the
-other (ordered pairs, reverse-KL on concatenated user+item embeddings).
-Skipped automatically when fewer than 2 architectures are enabled.
+After both architectures are trained, each acts as EMA teacher for the other
+(ordered pairs, reverse-KL on concatenated user+item embeddings). Skipped
+automatically when fewer than 2 architectures are enabled.
 
 ### 8. Evaluate (`stages/stage_evaluate.py`)
 Test-split loss per combination, logged to MLflow.
@@ -81,6 +121,7 @@ Top-N per user × genre and cold-start aggregates. Written to
 to MinIO.
 
 ### 10. Serve (`serving/api.py`, FastAPI)
+
 | Route | Purpose |
 |---|---|
 | `POST /recommend` | Personalized or cold-start Top-N lookup |
@@ -117,24 +158,12 @@ Airflow-facing wrappers.
 - **Optuna** — RDB storage (separate `optuna_studies` DB, see `init.sql`)
   for resumable sweeps.
 
-## Running locally
-
-```bash
-cp .env.example .env                     # fill in DB/MinIO/MLflow settings
-docker compose up -d                     # mlflow, postgres-mlflow, minio
-python main.py --data-dir ./ml-25m.zip   # full pipeline
-python main.py --stages serve            # API only
-```
-
-Key flags: `--stages`, `--from-stage/--to-stage`, `--skip-tune`,
-`--losses/--architectures` (filter combos), `--ingest-mode
-{upsert,skip,replace}`, `--dry-run`. See `python main.py --help`.
-
 ## Tests
 
 ```bash
 pytest tests/ -v
 ```
+
 Airflow DAG files themselves aren't imported in tests (they need a live
 Airflow install); `pipeline_logic.py` — which has zero Airflow imports —
 carries all the tested logic.
