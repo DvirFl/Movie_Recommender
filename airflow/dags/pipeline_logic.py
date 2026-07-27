@@ -80,6 +80,8 @@ def load_datasets():
     itf = load_item_features()
     n_users = max(uf.keys()) + 1
     n_items = max(itf.keys()) + 1
+    n_genres = len(next(iter(itf.values()))["genre_multihot"])
+
     datasets = {
         split: MovieLensDataset(df, uf, itf, split=split)
         for split, df in splits_raw.items()
@@ -205,11 +207,11 @@ def run_tune(arch_name: str, loss_name: str, **context) -> dict:
     arch_entry = registry.get_arch_entry(arch_name)
     loss_entry = registry.get_loss_entry(loss_name)
 
-    datasets, _, _, n_users, n_items = load_datasets()
+    datasets, _, _, n_users, n_items, n_genres = load_datasets()
     train_fn = resolve_trainer(arch_name)
 
     def objective(hparams: dict) -> float:
-        arch = arch_entry.cls(n_users=n_users, n_items=n_items)
+        arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
         loss = loss_entry.cls()
         # Halve epochs during sweep for speed
         sweep_hparams = {**hparams, "n_epochs": max(1, hparams.get("n_epochs", 2) // 2)}
@@ -262,8 +264,8 @@ def run_train(arch_name: str, loss_name: str, **context) -> str:
     arch_entry = registry.get_arch_entry(arch_name)
     loss_entry = registry.get_loss_entry(loss_name)
 
-    datasets, _, _, n_users, n_items = load_datasets()
-    arch = arch_entry.cls(n_users=n_users, n_items=n_items)
+    datasets, _, _, n_users, n_items, n_genres = load_datasets()
+    arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
     loss = loss_entry.cls()
     train_fn = resolve_trainer(arch_name)
 
@@ -299,13 +301,13 @@ def run_cross_distill(**context) -> None:
         logger.info("Fewer than 2 architectures — skipping cross-distillation.")
         return
 
-    datasets, _, _, n_users, n_items = load_datasets()
+    datasets, _, _, n_users, n_items, n_genres = load_datasets()
     loader = DataLoader(datasets["train"], batch_size=512, shuffle=True, num_workers=2)
 
     arch_models: dict[str, Any] = {}
     for arch_entry, _ in combos:
         if arch_entry.name not in arch_models:
-            arch_models[arch_entry.name] = arch_entry.cls(n_users=n_users, n_items=n_items)
+            arch_models[arch_entry.name] = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
 
     for student_name in arch_models:
         for teacher_name in arch_models:
@@ -313,7 +315,7 @@ def run_cross_distill(**context) -> None:
                 continue
             logger.info("Cross-distilling: %s → %s", teacher_name, student_name)
             cross_distill(
-                student=arch_models[student_name],
+                student_model=arch_models[student_name],
                 teacher_model=arch_models[teacher_name],
                 dataloader=loader,
                 student_name=student_name,
@@ -332,7 +334,7 @@ def run_evaluate(**context) -> dict:
     mlflow.set_tracking_uri(mlflow_uri())
 
     combos = get_active_combinations(conf)
-    datasets, _, _, n_users, n_items = load_datasets()
+    datasets, _, _, n_users, n_items, n_genres = load_datasets()
     test_loader = DataLoader(datasets["test"], batch_size=512, num_workers=2)
     device = get_device()
 
@@ -340,7 +342,7 @@ def run_evaluate(**context) -> dict:
     with mlflow.start_run(run_name="evaluate", nested=False):
         mlflow.set_tag("stage", "evaluate")
         for arch_entry, loss_entry in combos:
-            arch    = arch_entry.cls(n_users=n_users, n_items=n_items).to(device)
+            arch    = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres).to(device)
             loss_fn = loss_entry.cls().to(device)
             arch.eval()
             total = 0.0
@@ -366,11 +368,11 @@ def run_precompute(**context) -> dict:
     conf = getattr(context.get("dag_run"), "conf", {}) or {}
     combos = get_active_combinations(conf)
     device = get_device()
-    _, _, _, n_users, n_items = load_datasets()
+    _, _, _, n_users, n_items, n_genres = load_datasets()
 
     all_counts: dict[str, int] = {}
     for arch_entry, loss_entry in combos:
-        arch = arch_entry.cls(n_users=n_users, n_items=n_items).to(device)
+        arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres).to(device)
         model_name = f"{arch_entry.name}_{loss_entry.name}"
         counts = precompute_recommendations(arch, model_name)
         all_counts[model_name] = counts.get("top_n_user_genre", 0)

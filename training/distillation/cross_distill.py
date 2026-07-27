@@ -20,7 +20,7 @@ from training.device_utils import get_device, move_batch, autocast_context, log_
 
 
 def cross_distill(
-    student: nn.Module,
+    student_model: nn.Module,
     teacher_model: nn.Module,
     dataloader: DataLoader,
     n_epochs: int = 2,
@@ -47,15 +47,19 @@ def cross_distill(
         Updated student model (on CPU).
     """
     device = get_device()
-    student = student.to(device)
+    student_model = student_model.to(device)
     teacher_model = teacher_model.to(device)
+
+    student_model.train()
+    student_model.requires_grad_(True)
+
     teacher_model.eval()
     teacher_model.requires_grad_(False)
 
     # Student also gets its own EMA teacher for stability
-    student_ema = EMATeacher(student, alpha=ema_alpha)
+    student_ema = EMATeacher(student_model, alpha=ema_alpha)
 
-    optimizer = torch.optim.AdamW(student.parameters(), lr=lr)
+    optimizer = torch.optim.AdamW(student_model.parameters(), lr=lr)
 
     with mlflow.start_run(run_name=f"cross_distill_{teacher_name}_to_{student_name}", nested=True):
         mlflow.set_tag("distillation_type", "cross")
@@ -66,7 +70,7 @@ def cross_distill(
 
         for epoch in range(n_epochs):
             mask_dims = warmup_mask_dims if epoch == 0 else 0
-            student.train()
+            student_model.train()
             epoch_loss = 0.0
 
             for step, batch in enumerate(dataloader):
@@ -75,8 +79,8 @@ def cross_distill(
 
                 with autocast_context(device):
                     # Student forward (no demo context)
-                    s_user = student.encode_user(batch)
-                    s_item = student.encode_item(batch)
+                    s_user = student_model.encode_user(batch)
+                    s_item = student_model.encode_item(batch)
                     s_emb = torch.cat([s_user, s_item], dim=-1)
 
                     # Teacher forward (with demo context from the other architecture)
@@ -96,12 +100,12 @@ def cross_distill(
                     loss = analytic_kl_loss(s_emb, t_emb, warmup_mask_dims=mask_dims)
 
                 loss.backward()
-                torch.nn.utils.clip_grad_norm_(student.parameters(), 1.0)
+                torch.nn.utils.clip_grad_norm_(student_model.parameters(), 1.0)
                 optimizer.step()
-                student_ema.update(student)
+                student_ema.update(student_model)
                 epoch_loss += loss.item()
 
             avg_loss = epoch_loss / max(len(dataloader), 1)
             mlflow.log_metric("cross_kl_loss", avg_loss, step=epoch)
 
-    return student.cpu()
+    return student_model.cpu()

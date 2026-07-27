@@ -103,6 +103,8 @@ def task_tune(arch_name: str, loss_name: str, **context) -> dict:
     n_users = max(user_features.keys()) + 1
     n_items = max(item_features.keys()) + 1
 
+    n_genres = len(next(iter(item_features.values()))["genre_multihot"])
+
     train_ds = MovieLensDataset(splits["train"], user_features, item_features, split="train")
     val_ds = MovieLensDataset(splits["val"], user_features, item_features, split="val")
 
@@ -111,7 +113,7 @@ def task_tune(arch_name: str, loss_name: str, **context) -> dict:
 
     def objective(hparams):
         import torch
-        arch = arch_entry.cls(n_users=n_users, n_items=n_items)
+        arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
         loss = loss_entry.cls()
 
         if arch_name == "TwoTower":
@@ -156,10 +158,12 @@ def task_train(arch_name: str, loss_name: str, **context) -> str:
     user_features = load_user_features()
     item_features = load_item_features()
 
+    n_genres = len(next(iter(item_features.values()))["genre_multihot"])
+
     n_users = max(user_features.keys()) + 1
     n_items = max(item_features.keys()) + 1
 
-    arch = arch_entry.cls(n_users=n_users, n_items=n_items)
+    arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
     loss = loss_entry.cls()
 
     train_ds = MovieLensDataset(splits["train"], user_features, item_features, split="train")
@@ -208,6 +212,7 @@ def task_cross_distill(**context) -> None:
     item_features = load_item_features()
     n_users = max(user_features.keys()) + 1
     n_items = max(item_features.keys()) + 1
+    n_genres = len(next(iter(item_features.values()))["genre_multihot"])
     train_ds = MovieLensDataset(splits["train"], user_features, item_features, split="train")
     loader = DataLoader(train_ds, batch_size=512, shuffle=True)
 
@@ -217,7 +222,7 @@ def task_cross_distill(**context) -> None:
 
     # Build model instances for all combos
     models = {
-        ae.name: ae.cls(n_users=n_users, n_items=n_items)
+        ae.name: ae.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
         for ae, _ in combos
     }
 
@@ -228,7 +233,7 @@ def task_cross_distill(**context) -> None:
             if i == j:
                 continue
             cross_distill(
-                student=models[student_name],
+                student_model=models[student_name],
                 teacher_model=models[teacher_name],
                 dataloader=loader,
                 student_name=student_name,
@@ -250,6 +255,8 @@ def task_evaluate(**context) -> dict:
     item_features = load_item_features()
     n_users = max(user_features.keys()) + 1
     n_items = max(item_features.keys()) + 1
+    n_genres = len(next(iter(item_features.values()))["genre_multihot"])
+
     test_ds = MovieLensDataset(splits["test"], user_features, item_features, split="test")
     test_loader = DataLoader(test_ds, batch_size=512)
 
@@ -258,7 +265,7 @@ def task_evaluate(**context) -> dict:
 
     results = {}
     for arch_entry, loss_entry in registry.get_enabled_combinations():
-        arch = arch_entry.cls(n_users=n_users, n_items=n_items)
+        arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres)
         loss_fn = loss_entry.cls()
         arch.eval()
         total_loss = 0.0
@@ -291,12 +298,13 @@ def task_precompute(**context) -> dict:
     item_features = load_item_features()
     n_users = max(user_features.keys()) + 1
     n_items = max(item_features.keys()) + 1
+    n_genres = len(next(iter(item_features.values()))["genre_multihot"])
 
     all_counts: dict[str, int] = {}
     device = get_device()
 
     for arch_entry, loss_entry in registry.get_enabled_combinations():
-        arch = arch_entry.cls(n_users=n_users, n_items=n_items).to(device)
+        arch = arch_entry.cls(n_users=n_users, n_items=n_items, n_genres=n_genres).to(device)
         model_name = f"{arch_entry.name}_{loss_entry.name}"
         counts = precompute_recommendations(arch, model_name)
         all_counts[model_name] = counts.get("top_n_user_genre", 0)
