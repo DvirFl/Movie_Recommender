@@ -79,7 +79,7 @@ def run(
                 "[cross_distill] %s → %s (%d epochs)", teacher_name, student_name, n_epochs
             )
             cross_distill(
-                student=arch_models[student_name],
+                student_model=arch_models[student_name],
                 teacher_model=arch_models[teacher_name],
                 dataloader=loader,
                 n_epochs=n_epochs,

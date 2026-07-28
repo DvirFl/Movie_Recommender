@@ -101,7 +101,7 @@ def precompute_recommendations(
     for user_id, uf in user_features.items():
         import torch as _t
         # Build a single-user batch
-        ga = list(uf["genre_affinity"].values())
+        ga = list(uf["genre_affinity"])
         ga_padded = (ga + [0.0] * 20)[:20]
         user_batch = {
             "user_id": _t.tensor([user_id], dtype=_t.long).to(device),

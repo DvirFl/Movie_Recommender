@@ -33,7 +33,7 @@ def cross_distill(
     """Distil teacher embeddings into student via cross-architecture reverse KL.
 
     Args:
-        student:          student architecture being updated.
+        student_model:    student architecture being updated.
         teacher_model:    frozen teacher from the other architecture.
         dataloader:       training data loader.
         n_epochs:         number of distillation epochs.
