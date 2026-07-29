@@ -1,0 +1,736 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>Reel Room — MovieLens Control Panel</title>
+
+<!-- React + ReactDOM (UMD builds — no bundler needed) -->
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<!-- Babel Standalone — lets the browser JIT-compile the JSX below, no build step -->
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
+  html, body { margin:0; padding:0; background:#0d1013; }
+  .mc-app{
+    --ink:#14181C; --paper:#EDE7DA; --paper-dim:#DED6C4;
+    --marquee:#E3B23C; --reel-red:#C1443C; --slate:#9BA3AE; --screen-green:#4E9E6B;
+    background:var(--ink); color:var(--paper); font-family:'IBM Plex Sans',sans-serif;
+    min-height:100vh;
+  }
+  .mc-mono{ font-family:'IBM Plex Mono',monospace; }
+  .mc-shell{ display:flex; min-height:calc(100vh - 70px); }
+  .mc-header{
+    display:flex; align-items:center; justify-content:space-between;
+    padding:18px 28px; border-bottom:1px solid rgba(237,231,218,0.12);
+  }
+  .mc-brand{ display:flex; align-items:center; gap:10px; }
+  .mc-brand-emoji{ font-size:22px; }
+  .mc-brand-title{
+    font-family:'Bebas Neue',sans-serif; letter-spacing:0.08em; font-size:26px;
+    color:var(--marquee); line-height:1;
+  }
+  .mc-brand-sub{ font-size:11px; color:var(--slate); letter-spacing:0.12em; text-transform:uppercase; }
+  .mc-health{ display:flex; align-items:center; gap:14px; }
+  .mc-health-pill{
+    display:flex; align-items:center; gap:6px; font-size:12px; padding:5px 12px;
+    border-radius:999px; border:1px solid rgba(237,231,218,0.18);
+  }
+  .mc-health-ok{ color:var(--screen-green); }
+  .mc-health-down{ color:var(--reel-red); }
+  .mc-health-checking{ color:var(--slate); }
+  .mc-apibase{
+    background:transparent; border:1px solid rgba(237,231,218,0.2); color:var(--paper);
+    font-family:'IBM Plex Mono',monospace; font-size:12px; padding:6px 10px; border-radius:6px;
+    width:220px;
+  }
+  .mc-apibase:focus{ outline:none; border-color:var(--marquee); }
+  .mc-rail{
+    width:172px; flex-shrink:0; border-right:1px solid rgba(237,231,218,0.12);
+    padding:20px 10px; display:flex; flex-direction:column; gap:4px; position:relative;
+  }
+  .mc-sprockets{
+    position:absolute; left:0; top:0; bottom:0; width:6px;
+    display:flex; flex-direction:column; justify-content:space-evenly; align-items:center;
+  }
+  .mc-sprocket-hole{ width:5px; height:5px; border-radius:50%; background:rgba(237,231,218,0.15); }
+  .mc-rail-item{
+    display:flex; align-items:center; gap:10px; padding:10px 12px; margin-left:8px;
+    border-radius:8px; cursor:pointer; font-size:13px; color:var(--slate); border:none;
+    background:transparent; text-align:left; font-family:inherit;
+  }
+  .mc-rail-item:hover{ background:rgba(237,231,218,0.06); color:var(--paper); }
+  .mc-rail-item.active{ background:var(--marquee); color:var(--ink); font-weight:600; }
+  .mc-main{ flex:1; padding:24px 28px; overflow-y:auto; }
+  .mc-eyebrow{
+    font-size:11px; letter-spacing:0.14em; text-transform:uppercase; color:var(--marquee);
+    font-weight:600;
+  }
+  .mc-panel-title{ font-family:'Bebas Neue',sans-serif; font-size:28px; letter-spacing:0.03em; margin:4px 0 18px; }
+  .mc-grid{ display:grid; grid-template-columns:1fr 1fr; gap:16px; }
+  .mc-card{ background:var(--paper); color:var(--ink); border-radius:10px; padding:18px 20px; position:relative; }
+  .mc-perf::before{
+    content:""; position:absolute; top:0; left:0; right:0; height:9px;
+    background-image:radial-gradient(circle, var(--ink) 3.2px, transparent 3.4px);
+    background-size:18px 18px; background-position:0 -9px; background-repeat:repeat-x;
+  }
+  .mc-card-head{ display:flex; align-items:center; justify-content:space-between; margin-bottom:12px; }
+  .mc-field{ display:flex; flex-direction:column; gap:5px; margin-bottom:14px; }
+  .mc-field-label{ font-size:11px; text-transform:uppercase; letter-spacing:0.08em; color:var(--slate); }
+  .mc-input, .mc-select{
+    background:rgba(237,231,218,0.05); border:1px solid rgba(237,231,218,0.18); color:var(--paper);
+    padding:9px 10px; border-radius:6px; font-family:'IBM Plex Sans',sans-serif; font-size:13px;
+  }
+  .mc-input:focus, .mc-select:focus{ outline:none; border-color:var(--marquee); }
+  .mc-select option{ background:var(--ink); color:var(--paper); }
+  .mc-btn{
+    display:inline-flex; align-items:center; gap:8px; padding:9px 18px; border-radius:6px;
+    font-size:13px; font-weight:600; cursor:pointer; border:1px solid transparent;
+    font-family:'IBM Plex Sans',sans-serif;
+  }
+  .mc-btn-primary{ background:var(--marquee); color:var(--ink); }
+  .mc-btn-primary:hover{ filter:brightness(1.08); }
+  .mc-btn-primary:disabled{ opacity:0.6; cursor:not-allowed; }
+  .mc-btn-ghost{ background:transparent; color:var(--paper); border-color:rgba(237,231,218,0.25); }
+  .mc-spin{ display:inline-block; animation:mc-spin 1s linear infinite; }
+  @keyframes mc-spin{ from{transform:rotate(0)} to{transform:rotate(360deg)} }
+  .mc-error{
+    display:flex; align-items:center; gap:8px; color:var(--reel-red); background:rgba(193,68,60,0.12);
+    border:1px solid rgba(193,68,60,0.35); padding:10px 14px; border-radius:8px; font-size:13px; margin:12px 0;
+  }
+  .mc-pill{ font-size:11px; padding:3px 10px; border-radius:999px; font-weight:600; text-transform:uppercase; letter-spacing:0.04em; }
+  .mc-pill-ok{ background:rgba(78,158,107,0.16); color:#2f6b45; }
+  .mc-pill-warn{ background:rgba(227,178,60,0.22); color:#8a6510; }
+  .mc-reel{ display:flex; flex-direction:column; gap:10px; margin-top:6px; }
+  .mc-reel-item{ display:flex; flex-direction:column; gap:3px; }
+  .mc-reel-row{ display:grid; grid-template-columns:24px 90px 1fr 60px; align-items:center; gap:10px; }
+  .mc-reel-rank{ font-family:'IBM Plex Mono',monospace; font-size:11px; color:var(--slate); }
+  .mc-reel-id{ font-family:'IBM Plex Mono',monospace; font-size:12px; }
+  .mc-reel-bar-track{ background:var(--paper-dim); height:6px; border-radius:3px; overflow:hidden; }
+  .mc-reel-bar-fill{ background:var(--reel-red); height:100%; }
+  .mc-reel-score{ font-family:'IBM Plex Mono',monospace; font-size:11px; text-align:right; color:var(--slate); }
+  .mc-reel-explain{ font-size:11px; color:#5B6472; padding-left:34px; line-height:1.4; }
+  .mc-empty{
+    background:var(--paper); border-radius:10px; padding:22px; font-size:13px;
+    color:#5B6472; border:1px dashed var(--paper-dim);
+  }
+  .mc-checks{ display:flex; flex-wrap:wrap; gap:8px; }
+  .mc-check{
+    display:flex; align-items:center; gap:6px; font-size:12px; padding:6px 10px;
+    border:1px solid rgba(237,231,218,0.2); border-radius:6px; cursor:pointer;
+  }
+  .mc-check input{ accent-color:var(--marquee); }
+  .mc-stat-grid{ display:grid; grid-template-columns:repeat(auto-fit,minmax(140px,1fr)); gap:12px; margin-bottom:20px; }
+  .mc-stat{ background:rgba(237,231,218,0.05); border:1px solid rgba(237,231,218,0.12); border-radius:8px; padding:14px 16px; }
+  .mc-stat-label{ font-size:11px; text-transform:uppercase; letter-spacing:0.06em; color:var(--slate); }
+  .mc-stat-value{ font-family:'IBM Plex Mono',monospace; font-size:22px; margin-top:4px; }
+  .mc-idea-row{ display:grid; grid-template-columns:repeat(auto-fit,minmax(180px,1fr)); gap:12px; margin-top:16px; }
+  .mc-idea{ border:1px dashed rgba(237,231,218,0.25); border-radius:8px; padding:12px 14px; font-size:12px; color:var(--slate); }
+  .mc-idea b{ color:var(--paper); display:block; margin-bottom:4px; font-size:13px; }
+  .mc-table{ width:100%; border-collapse:collapse; font-size:12px; }
+  .mc-table th{ text-align:left; color:var(--slate); font-weight:500; padding:6px 8px; border-bottom:1px solid rgba(237,231,218,0.15); }
+  .mc-table td{ padding:6px 8px; border-bottom:1px solid rgba(237,231,218,0.06); font-family:'IBM Plex Mono',monospace; }
+  .mc-simple-chart{ display:flex; flex-direction:column; gap:8px; margin-top:10px; }
+  .mc-simple-chart-row{ display:grid; grid-template-columns:150px 1fr 80px; align-items:center; gap:10px; font-size:12px; }
+  .mc-simple-chart-label{ font-family:'IBM Plex Mono',monospace; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+  .mc-simple-chart-track{ background:var(--paper-dim); height:10px; border-radius:5px; overflow:hidden; }
+  .mc-simple-chart-fill{ height:100%; border-radius:5px; }
+  .mc-simple-chart-value{ font-family:'IBM Plex Mono',monospace; text-align:right; color:var(--slate); }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel" data-presets="react">
+const { useState, useEffect, useCallback } = React;
+
+const GENRES = [
+  "Action", "Adventure", "Animation", "Children", "Comedy", "Crime",
+  "Documentary", "Drama", "Fantasy", "Film-Noir", "Horror", "IMAX",
+  "Musical", "Mystery", "Romance", "Sci-Fi", "Thriller", "War", "Western",
+  "(no genres listed)",
+];
+const MODELS = ["TwoTower_TimedecayMSELoss", "InfoNCEEncoder_TimedecayInfoNCELoss"];
+const SCORING = ["cosine", "dot", "l2", "learned"];
+const ARCHS = ["TwoTower", "InfoNCEEncoder"];
+const LOSSES = ["TimedecayMSELoss", "TimedecayInfoNCELoss"];
+
+const TABS = [
+  { id: "recommend", label: "Recommend", emoji: "🔍" },
+  { id: "coldstart", label: "Cold start", emoji: "✨" },
+  { id: "abtest", label: "A/B test", emoji: "🆚" },
+  { id: "batch", label: "Batch", emoji: "👥" },
+  { id: "stats", label: "Statistics", emoji: "📊" },
+  { id: "trigger", label: "Trigger", emoji: "🚀" },
+];
+
+function useApi(apiBase) {
+  return useCallback(
+    async (path, options = {}) => {
+      const res = await fetch(`${apiBase}${path}`, {
+        headers: { "Content-Type": "application/json" },
+        ...options,
+      });
+      let body = null;
+      try { body = await res.json(); } catch (e) { /* empty body */ }
+      if (!res.ok) {
+        const msg = body && body.detail
+          ? (typeof body.detail === "string" ? body.detail : JSON.stringify(body.detail))
+          : res.statusText;
+        throw new Error(msg || `Request failed (${res.status})`);
+      }
+      return body;
+    },
+    [apiBase]
+  );
+}
+
+function Field({ label, children }) {
+  return (
+    <label className="mc-field">
+      <span className="mc-field-label">{label}</span>
+      {children}
+    </label>
+  );
+}
+
+function Button({ children, onClick, loading, variant = "primary" }) {
+  return (
+    <button type="button" onClick={onClick} disabled={loading} className={`mc-btn mc-btn-${variant}`}>
+      {loading ? <span className="mc-spin">⟳</span> : null}
+      {children}
+    </button>
+  );
+}
+
+function ErrorBanner({ message }) {
+  if (!message) return null;
+  return <div className="mc-error"><span>✕</span><span>{message}</span></div>;
+}
+
+function SimpleBarChart({ data, labelKey, valueKey, color }) {
+  const max = Math.max(...data.map((d) => d[valueKey]), 1);
+  return (
+    <div className="mc-simple-chart">
+      {data.map((d, i) => (
+        <div className="mc-simple-chart-row" key={i}>
+          <span className="mc-simple-chart-label">{d[labelKey]}</span>
+          <div className="mc-simple-chart-track">
+            <div className="mc-simple-chart-fill" style={{ width: `${(d[valueKey] / max) * 100}%`, background: color }} />
+          </div>
+          <span className="mc-simple-chart-value">
+            {typeof d[valueKey] === "number" ? d[valueKey].toLocaleString() : d[valueKey]}
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+function ScoreReel({ title, source, movieIds, scores, explanations }) {
+  if (!movieIds || movieIds.length === 0) {
+    return (
+      <div className="mc-empty">
+        No results returned. Titles aren't available from this API —
+        movie_id is the raw key from <span className="mc-mono">raw.movies</span>.
+      </div>
+    );
+  }
+  const max = Math.max(...scores.map((s) => Math.abs(s)), 1e-6);
+  return (
+    <div className="mc-card mc-perf">
+      <div className="mc-card-head">
+        <span className="mc-eyebrow">{title}</span>
+        <span className={`mc-pill ${source === "precomputed" ? "mc-pill-ok" : "mc-pill-warn"}`}>{source}</span>
+      </div>
+      <div className="mc-reel">
+        {movieIds.map((mid, i) => {
+          const pct = Math.min(100, Math.max(4, (Math.abs(scores[i]) / max) * 100));
+          return (
+            <div className="mc-reel-item" key={`${mid}-${i}`}>
+              <div className="mc-reel-row">
+                <span className="mc-reel-rank">{i + 1}</span>
+                <span className="mc-reel-id">movie #{mid}</span>
+                <div className="mc-reel-bar-track"><div className="mc-reel-bar-fill" style={{ width: `${pct}%` }} /></div>
+                <span className="mc-reel-score">{scores[i].toFixed(3)}</span>
+              </div>
+              {explanations && explanations[i] && <div className="mc-reel-explain">{explanations[i]}</div>}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+function ArchitectureResults({ payload }) {
+  if (!payload) {
+    return <div className="mc-empty">Run a lookup to see recommendations from every enabled architecture, side by side.</div>;
+  }
+  if (!payload.results || payload.results.length === 0) {
+    return <div className="mc-empty">No architecture had precomputed rows for this request.</div>;
+  }
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+      {payload.results.map((r) => (
+        <ScoreReel
+          key={r.model_name}
+          title={`${r.architecture} · ${r.loss}`}
+          source={r.source}
+          movieIds={r.recommendations.map((x) => x.movie_id)}
+          scores={r.recommendations.map((x) => x.score)}
+          explanations={r.recommendations.map((x) => x.explanation)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function RecommendPanel({ api }) {
+  const [userId, setUserId] = useState("1");
+  const [genre, setGenre] = useState("");
+  const [architectures, setArchitectures] = useState([]);
+  const [scoringMethod, setScoringMethod] = useState("cosine");
+  const [topN, setTopN] = useState(10);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const toggleArch = (a) => setArchitectures((p) => (p.includes(a) ? p.filter((x) => x !== a) : [...p, a]));
+
+  const submit = async () => {
+    setLoading(true); setError(""); setResult(null);
+    try {
+      const body = {
+        user_id: userId ? Number(userId) : null,
+        genre: genre || null,
+        scoring_method: scoringMethod,
+        top_n: Number(topN),
+        architectures: architectures.length ? architectures : "all",
+      };
+      const res = await api("/recommend", { method: "POST", body: JSON.stringify(body) });
+      setResult(res);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <span className="mc-eyebrow">Ticket lookup · every architecture, side by side</span>
+      <h2 className="mc-panel-title">Recommend for a user</h2>
+      <div className="mc-grid">
+        <div>
+          <Field label="User ID">
+            <input className="mc-input" value={userId} onChange={(e) => setUserId(e.target.value)} placeholder="1" />
+          </Field>
+          <Field label="Genre filter (optional)">
+            <select className="mc-select" value={genre} onChange={(e) => setGenre(e.target.value)}>
+              <option value="">Any genre</option>
+              {GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </Field>
+          <Field label="Architectures (blank = all registered)">
+            <div className="mc-checks">
+              {ARCHS.map((a) => (
+                <label className="mc-check" key={a}>
+                  <input type="checkbox" checked={architectures.includes(a)} onChange={() => toggleArch(a)} />{a}
+                </label>
+              ))}
+            </div>
+          </Field>
+          <Field label="Scoring method">
+            <select className="mc-select" value={scoringMethod} onChange={(e) => setScoringMethod(e.target.value)}>
+              {SCORING.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="Top N">
+            <input className="mc-input" type="number" min="1" max="100" value={topN} onChange={(e) => setTopN(e.target.value)} />
+          </Field>
+          <Button onClick={submit} loading={loading}>Get recommendations</Button>
+          <ErrorBanner message={error} />
+        </div>
+        <ArchitectureResults payload={result} />
+      </div>
+    </div>
+  );
+}
+
+function ColdStartPanel({ api }) {
+  const [genre, setGenre] = useState(GENRES[0]);
+  const [architectures, setArchitectures] = useState([]);
+  const [scoringMethod, setScoringMethod] = useState("cosine");
+  const [topN, setTopN] = useState(10);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const toggleArch = (a) => setArchitectures((p) => (p.includes(a) ? p.filter((x) => x !== a) : [...p, a]));
+
+  const submit = async () => {
+    setLoading(true); setError(""); setResult(null);
+    try {
+      const body = {
+        user_id: null, genre, scoring_method: scoringMethod, top_n: Number(topN),
+        architectures: architectures.length ? architectures : "all",
+      };
+      const res = await api("/recommend", { method: "POST", body: JSON.stringify(body) });
+      setResult(res);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <span className="mc-eyebrow">No history yet · every architecture</span>
+      <h2 className="mc-panel-title">Cold-start recommendations</h2>
+      <div className="mc-grid">
+        <div>
+          <Field label="Genre">
+            <select className="mc-select" value={genre} onChange={(e) => setGenre(e.target.value)}>
+              {GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </Field>
+          <Field label="Architectures (blank = all registered)">
+            <div className="mc-checks">
+              {ARCHS.map((a) => (
+                <label className="mc-check" key={a}>
+                  <input type="checkbox" checked={architectures.includes(a)} onChange={() => toggleArch(a)} />{a}
+                </label>
+              ))}
+            </div>
+          </Field>
+          <Field label="Scoring method">
+            <select className="mc-select" value={scoringMethod} onChange={(e) => setScoringMethod(e.target.value)}>
+              {SCORING.map((s) => <option key={s} value={s}>{s}</option>)}
+            </select>
+          </Field>
+          <Field label="Top N">
+            <input className="mc-input" type="number" min="1" max="100" value={topN} onChange={(e) => setTopN(e.target.value)} />
+          </Field>
+          <Button onClick={submit} loading={loading}>Get cold-start picks</Button>
+          <ErrorBanner message={error} />
+        </div>
+        <ArchitectureResults payload={result} />
+      </div>
+    </div>
+  );
+}
+
+function ABTestPanel({ api }) {
+  const [userId, setUserId] = useState("1");
+  const [genre, setGenre] = useState("");
+  const [topN, setTopN] = useState(10);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const submit = async () => {
+    setLoading(true); setError(""); setResult(null);
+    try {
+      const body = { user_id: Number(userId), genre: genre || null, top_n: Number(topN) };
+      const res = await api("/ab_test", { method: "POST", body: JSON.stringify(body) });
+      setResult(res);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <span className="mc-eyebrow">Split screening</span>
+      <h2 className="mc-panel-title">A/B test — TwoTower vs InfoNCE</h2>
+      <div className="mc-grid">
+        <div>
+          <Field label="User ID">
+            <input className="mc-input" value={userId} onChange={(e) => setUserId(e.target.value)} />
+          </Field>
+          <Field label="Genre filter (optional)">
+            <select className="mc-select" value={genre} onChange={(e) => setGenre(e.target.value)}>
+              <option value="">Any genre</option>
+              {GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
+            </select>
+          </Field>
+          <Field label="Top N">
+            <input className="mc-input" type="number" min="1" max="100" value={topN} onChange={(e) => setTopN(e.target.value)} />
+          </Field>
+          <Button onClick={submit} loading={loading}>Run A/B split</Button>
+          <ErrorBanner message={error} />
+          {result && (
+            <div className="mc-stat" style={{ marginTop: 14 }}>
+              <div className="mc-stat-label">Assigned model</div>
+              <div className="mc-stat-value mc-mono" style={{ fontSize: 15 }}>{result.assigned_model}</div>
+            </div>
+          )}
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+          {result ? (
+            <React.Fragment>
+              <ScoreReel title="Model A" source={result.model_a.source} movieIds={result.model_a.movie_ids} scores={result.model_a.scores} />
+              <ScoreReel title="Model B" source={result.model_b.source} movieIds={result.model_b.movie_ids} scores={result.model_b.scores} />
+            </React.Fragment>
+          ) : <div className="mc-empty">Deterministic split by user_id parity — see serving/routes/ab_test.py.</div>}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function BatchPanel({ api }) {
+  const [ids, setIds] = useState("1,2,3");
+  const [genre, setGenre] = useState("");
+  const [modelName, setModelName] = useState(MODELS[0]);
+  const [scoringMethod, setScoringMethod] = useState("cosine");
+  const [topN, setTopN] = useState(5);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const submit = async () => {
+    setLoading(true); setError(""); setResult(null);
+    try {
+      const userIds = ids.split(",").map((s) => Number(s.trim())).filter((n) => !Number.isNaN(n));
+      const body = { user_ids: userIds, genre: genre || null, model_name: modelName, scoring_method: scoringMethod, top_n: Number(topN) };
+      const res = await api("/batch", { method: "POST", body: JSON.stringify(body) });
+      setResult(res);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <span className="mc-eyebrow">Bulk screening</span>
+      <h2 className="mc-panel-title">Batch recommend</h2>
+      <Field label="User IDs (comma-separated)">
+        <input className="mc-input" style={{ width: "100%" }} value={ids} onChange={(e) => setIds(e.target.value)} />
+      </Field>
+      <div className="mc-grid">
+        <Field label="Genre filter (optional)">
+          <select className="mc-select" value={genre} onChange={(e) => setGenre(e.target.value)}>
+            <option value="">Any genre</option>
+            {GENRES.map((g) => <option key={g} value={g}>{g}</option>)}
+          </select>
+        </Field>
+        <Field label="Model">
+          <select className="mc-select" value={modelName} onChange={(e) => setModelName(e.target.value)}>
+            {MODELS.map((m) => <option key={m} value={m}>{m}</option>)}
+          </select>
+        </Field>
+        <Field label="Scoring method">
+          <select className="mc-select" value={scoringMethod} onChange={(e) => setScoringMethod(e.target.value)}>
+            {SCORING.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+        </Field>
+        <Field label="Top N per user">
+          <input className="mc-input" type="number" min="1" max="100" value={topN} onChange={(e) => setTopN(e.target.value)} />
+        </Field>
+      </div>
+      <Button onClick={submit} loading={loading}>Run batch</Button>
+      <ErrorBanner message={error} />
+      {result && (
+        <div className="mc-grid" style={{ marginTop: 16 }}>
+          {result.results.map((r, i) => (
+            <ScoreReel key={i} title={`User ${r.user_id != null ? r.user_id : "cold-start"}`} source={r.source} movieIds={r.movie_ids} scores={r.scores} />
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function StatsPanel({ api, active }) {
+  const [pipelineSizes, setPipelineSizes] = useState([]);
+  const [runs, setRuns] = useState([]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+
+  const load = useCallback(async () => {
+    setLoading(true); setError("");
+    try {
+      const [sizes, runList] = await Promise.all([api("/viz/pipeline_sizes"), api("/viz/runs?limit=25")]);
+      setPipelineSizes(sizes || []);
+      setRuns(runList || []);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  }, [api]);
+
+  useEffect(() => { if (active) load(); }, [active, load]);
+
+  const runChartData = runs.map((r) => {
+    const points = (r.metrics && r.metrics.val_loss) || [];
+    const last = points[points.length - 1];
+    return { name: r.run_name || r.run_id.slice(0, 8), val_loss: last ? Number(last.value.toFixed(4)) : 0 };
+  });
+
+  return (
+    <div>
+      <div className="mc-card-head" style={{ marginBottom: 4 }}>
+        <span className="mc-eyebrow">Box office</span>
+        <Button variant="ghost" onClick={load} loading={loading}>Refresh</Button>
+      </div>
+      <h2 className="mc-panel-title">Pipeline statistics</h2>
+      <ErrorBanner message={error} />
+
+      <div className="mc-stat-grid">
+        {pipelineSizes.map((p) => (
+          <div className="mc-stat" key={p.stage}>
+            <div className="mc-stat-label">{p.stage}</div>
+            <div className="mc-stat-value">{p.row_count.toLocaleString()}</div>
+          </div>
+        ))}
+      </div>
+
+      <div className="mc-card mc-perf" style={{ marginBottom: 16 }}>
+        <span className="mc-eyebrow">Row counts per table</span>
+        <SimpleBarChart data={pipelineSizes} labelKey="stage" valueKey="row_count" color="#C1443C" />
+      </div>
+
+      <div className="mc-card mc-perf">
+        <span className="mc-eyebrow">Latest val_loss per run</span>
+        <SimpleBarChart data={runChartData} labelKey="name" valueKey="val_loss" color="#E3B23C" />
+      </div>
+
+      <div className="mc-idea-row">
+        <div className="mc-idea"><b>Model drift monitor</b>Track val_loss trend per model over successive retrains; alert on regression.</div>
+        <div className="mc-idea"><b>Genre affinity explorer</b>Visualize a user's genre_affinity vector against recommended genres.</div>
+        <div className="mc-idea"><b>Live request replay</b>Stream recent /recommend calls with latency and cache-hit source.</div>
+      </div>
+    </div>
+  );
+}
+
+function TriggerPanel({ api }) {
+  const [losses, setLosses] = useState([]);
+  const [archs, setArchs] = useState([]);
+  const [requester, setRequester] = useState("");
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [result, setResult] = useState(null);
+
+  const toggle = (list, setList, val) => setList(list.includes(val) ? list.filter((x) => x !== val) : [...list, val]);
+
+  const submit = async () => {
+    setLoading(true); setError(""); setResult(null);
+    try {
+      const body = {
+        losses: losses.length ? losses : "all",
+        architectures: archs.length ? archs : "all",
+        run_from: "featurize",
+        requester: requester || null,
+      };
+      const res = await api("/trigger", { method: "POST", body: JSON.stringify(body) });
+      setResult(res);
+    } catch (e) { setError(e.message); }
+    setLoading(false);
+  };
+
+  return (
+    <div>
+      <span className="mc-eyebrow">Roll the reel</span>
+      <h2 className="mc-panel-title">Trigger a pipeline run</h2>
+      <Field label="Architectures (blank = all)">
+        <div className="mc-checks">
+          {ARCHS.map((a) => (
+            <label className="mc-check" key={a}>
+              <input type="checkbox" checked={archs.includes(a)} onChange={() => toggle(archs, setArchs, a)} />{a}
+            </label>
+          ))}
+        </div>
+      </Field>
+      <Field label="Losses (blank = all)">
+        <div className="mc-checks">
+          {LOSSES.map((l) => (
+            <label className="mc-check" key={l}>
+              <input type="checkbox" checked={losses.includes(l)} onChange={() => toggle(losses, setLosses, l)} />{l}
+            </label>
+          ))}
+        </div>
+      </Field>
+      <Field label="Requester (optional)">
+        <input className="mc-input" value={requester} onChange={(e) => setRequester(e.target.value)} placeholder="your name" />
+      </Field>
+      <Button onClick={submit} loading={loading}>🎟 Trigger on-demand run</Button>
+      <ErrorBanner message={error} />
+      {result && (
+        <div className="mc-card mc-perf" style={{ marginTop: 16 }}>
+          <div className="mc-card-head">
+            <span className="mc-eyebrow">Trigger accepted</span>
+            <span className="mc-pill mc-pill-ok">{result.status}</span>
+          </div>
+          <table className="mc-table">
+            <tbody>
+              <tr><th>Trigger ID</th><td>{result.trigger_id}</td></tr>
+              <tr><th>Airflow run</th><td>{result.airflow_run_id || "—"}</td></tr>
+              <tr><th>Architectures</th><td>{Array.isArray(result.requested_architectures) ? result.requested_architectures.join(", ") : result.requested_architectures}</td></tr>
+              <tr><th>Losses</th><td>{Array.isArray(result.requested_losses) ? result.requested_losses.join(", ") : result.requested_losses}</td></tr>
+            </tbody>
+          </table>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function MovieLensDashboard() {
+  const [apiBase, setApiBase] = useState("http://localhost:8000");
+  const [health, setHealth] = useState("checking");
+  const [activeTab, setActiveTab] = useState("recommend");
+  const api = useApi(apiBase);
+
+  useEffect(() => {
+    let cancelled = false;
+    const ping = async () => {
+      try { await api("/health"); if (!cancelled) setHealth("ok"); }
+      catch (e) { if (!cancelled) setHealth("down"); }
+    };
+    ping();
+    const id = setInterval(ping, 15000);
+    return () => { cancelled = true; clearInterval(id); };
+  }, [api]);
+
+  return (
+    <div className="mc-app">
+      <div className="mc-header">
+        <div className="mc-brand">
+          <span className="mc-brand-emoji">🎞</span>
+          <div>
+            <div className="mc-brand-title">Reel Room</div>
+            <div className="mc-brand-sub">MovieLens recsys control panel</div>
+          </div>
+        </div>
+        <div className="mc-health">
+          <input className="mc-apibase mc-mono" value={apiBase} onChange={(e) => setApiBase(e.target.value)} placeholder="http://localhost:8000" />
+          <div className={`mc-health-pill mc-health-${health}`}>
+            {health === "ok" ? "✅ API live" : health === "down" ? "✕ API unreachable" : <span><span className="mc-spin">⟳</span> Checking…</span>}
+          </div>
+        </div>
+      </div>
+
+      <div className="mc-shell">
+        <div className="mc-rail">
+          <div className="mc-sprockets">{Array.from({ length: 14 }).map((_, i) => <div className="mc-sprocket-hole" key={i} />)}</div>
+          {TABS.map((t) => (
+            <button key={t.id} className={`mc-rail-item ${activeTab === t.id ? "active" : ""}`} onClick={() => setActiveTab(t.id)}>
+              <span>{t.emoji}</span>{t.label}
+            </button>
+          ))}
+        </div>
+
+        <div className="mc-main">
+          {activeTab === "recommend" && <RecommendPanel api={api} />}
+          {activeTab === "coldstart" && <ColdStartPanel api={api} />}
+          {activeTab === "abtest" && <ABTestPanel api={api} />}
+          {activeTab === "batch" && <BatchPanel api={api} />}
+          {activeTab === "stats" && <StatsPanel api={api} active={activeTab === "stats"} />}
+          {activeTab === "trigger" && <TriggerPanel api={api} />}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+const root = ReactDOM.createRoot(document.getElementById("root"));
+root.render(<MovieLensDashboard />);
+</script>
+</body>
+</html>
