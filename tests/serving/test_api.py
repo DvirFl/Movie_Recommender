@@ -34,51 +34,60 @@ def _mock_user_row():
     return row
 
 
+def _make_arch_combo(arch_name="TwoTower", loss_name="TimedecayMSELoss"):
+    arch = MagicMock(); arch.name = arch_name
+    loss = MagicMock(); loss.name = loss_name
+    return arch, loss
+
+
 def test_recommend_cold_start():
-    with patch("serving.routes.recommend.get_session") as mock_ctx:
+    mock_registry = MagicMock()
+    mock_registry.get_enabled_combinations.return_value = [_make_arch_combo()]
+    with patch("serving.routes.recommend.ComponentRegistry", return_value=mock_registry), \
+         patch("serving.routes.recommend.get_session") as mock_ctx:
         mock_session = MagicMock()
         mock_ctx.return_value.__enter__.return_value = mock_session
         mock_ctx.return_value.__exit__.return_value = False
         mock_session.scalars.return_value.first.return_value = _mock_cold_start_row()
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
 
-        response = client.post("/recommend", json={
-            "model_name": "TwoTower_TimedecayMSELoss",
-            "scoring_method": "cosine",
-        })
+        response = client.post("/recommend", json={"scoring_method": "cosine"})
         assert response.status_code == 200
-        data = response.json()
-        assert data["source"] == "precomputed"
-        assert len(data["movie_ids"]) > 0
+        result = response.json()["results"][0]
+        assert result["source"] == "precomputed"
+        assert len(result["recommendations"]) > 0
+        assert result["recommendations"][0]["explanation"]
 
 
 def test_recommend_personalized():
-    with patch("serving.routes.recommend.get_session") as mock_ctx:
+    mock_registry = MagicMock()
+    mock_registry.get_enabled_combinations.return_value = [_make_arch_combo()]
+    with patch("serving.routes.recommend.ComponentRegistry", return_value=mock_registry), \
+         patch("serving.routes.recommend.get_session") as mock_ctx:
         mock_session = MagicMock()
         mock_ctx.return_value.__enter__.return_value = mock_session
         mock_ctx.return_value.__exit__.return_value = False
+        mock_session.get.return_value = None
         mock_session.scalars.return_value.first.return_value = _mock_user_row()
+        mock_session.execute.return_value.scalars.return_value.all.return_value = []
 
-        response = client.post("/recommend", json={
-            "user_id": 1,
-            "model_name": "TwoTower_TimedecayMSELoss",
-            "scoring_method": "cosine",
-        })
+        response = client.post("/recommend", json={"user_id": 1, "scoring_method": "cosine"})
         assert response.status_code == 200
         assert response.json()["user_id"] == 1
 
 
 def test_recommend_not_found():
-    with patch("serving.routes.recommend.get_session") as mock_ctx:
+    mock_registry = MagicMock()
+    mock_registry.get_enabled_combinations.return_value = [_make_arch_combo()]
+    with patch("serving.routes.recommend.ComponentRegistry", return_value=mock_registry), \
+         patch("serving.routes.recommend.get_session") as mock_ctx:
         mock_session = MagicMock()
         mock_ctx.return_value.__enter__.return_value = mock_session
         mock_ctx.return_value.__exit__.return_value = False
+        mock_session.get.return_value = None
         mock_session.scalars.return_value.first.return_value = None
 
-        response = client.post("/recommend", json={
-            "user_id": 99999,
-            "model_name": "TwoTower_TimedecayMSELoss",
-            "scoring_method": "cosine",
-        })
+        response = client.post("/recommend", json={"user_id": 99999, "scoring_method": "cosine"})
         assert response.status_code == 404
 
 

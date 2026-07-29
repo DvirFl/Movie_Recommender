@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from serving.routes.recommend import recommend
+from serving.routes.recommend import _recommend_single as recommend
 from serving.schemas import ABTestRequest, ABTestResponse, RecommendRequest
 
 router = APIRouter(prefix="/ab_test", tags=["ab_test"])

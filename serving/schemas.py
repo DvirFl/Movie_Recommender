@@ -28,6 +28,40 @@ class RecommendResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# /recommend (multi-architecture)
+# ---------------------------------------------------------------------------
+
+class RecommendedMovie(BaseModel):
+    movie_id: int
+    score: float
+    explanation: str
+
+
+class ArchitectureResult(BaseModel):
+    model_name: str
+    architecture: str
+    loss: str
+    scoring_method: str
+    source: Literal["precomputed", "realtime"]
+    recommendations: list[RecommendedMovie]
+
+
+class MultiArchRecommendRequest(BaseModel):
+    user_id: Optional[int] = None
+    genre: Optional[str] = None
+    scoring_method: Literal["cosine", "dot", "l2", "learned"] = "cosine"
+    top_n: int = Field(default=10, ge=1, le=100)
+    architectures: list[str] | Literal["all"] = "all"
+
+
+class MultiArchRecommendResponse(BaseModel):
+    user_id: Optional[int]
+    genre: Optional[str]
+    scoring_method: str
+    results: list[ArchitectureResult]
+
+
+# ---------------------------------------------------------------------------
 # /ab_test
 # ---------------------------------------------------------------------------
 

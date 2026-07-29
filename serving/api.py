@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 
 from serving.routes import ab_test, batch, recommend, trigger, viz
 
@@ -29,3 +30,7 @@ app.include_router(viz.router)
 @app.get("/health")
 def health() -> dict:
     return {"status": "ok"}
+
+@app.get("/dashboard")
+def dashboard():
+    return FileResponse("frontend/dashboard.html")

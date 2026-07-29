@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from serving.routes.recommend import recommend
+from serving.routes.recommend import _recommend_single as recommend
 from serving.schemas import BatchRequest, BatchResponse, RecommendRequest, RecommendResponse
 
 router = APIRouter(prefix="/batch", tags=["batch"])
