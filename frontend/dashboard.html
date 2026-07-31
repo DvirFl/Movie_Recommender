@@ -5,11 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
 <title>Reel Room — MovieLens Control Panel</title>
 
-<!-- React + ReactDOM (UMD builds — no bundler needed) -->
+<!-- React + ReactDOM (UMD builds) -->
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
-<!-- Babel Standalone — lets the browser JIT-compile the JSX below, no build step -->
-<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<!-- Babel Standalone pinned version -->
+<script src="https://unpkg.com/@babel/standalone@7.23.6/babel.min.js"></script>
 
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap');
@@ -143,7 +143,8 @@
 <body>
 <div id="root"></div>
 
-<script type="text/babel" data-presets="react">
+<script type="text/babel" data-presets="react" data-type="module">
+/** @jsxRuntime classic */
 const { useState, useEffect, useCallback } = React;
 
 const GENRES = [
