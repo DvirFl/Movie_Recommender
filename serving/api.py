@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 
-from serving.routes import ab_test, batch, recommend, trigger, viz
+from serving.routes import ab_test, batch, movies, recommend, trigger, viz
 
 app = FastAPI(
     title="MovieLens RecSys API",
@@ -25,7 +25,7 @@ app.include_router(ab_test.router)
 app.include_router(batch.router)
 app.include_router(trigger.router)
 app.include_router(viz.router)
-
+app.include_router(movies.router)
 
 @app.get("/health")
 def health() -> dict:

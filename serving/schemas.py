@@ -6,7 +6,19 @@ from pydantic import BaseModel, Field
 
 
 # ---------------------------------------------------------------------------
-# /recommend
+# Shared: a single recommended movie (named, not numbered)
+# ---------------------------------------------------------------------------
+
+class RecommendedMovie(BaseModel):
+    movie_id: int
+    title: str
+    year: Optional[int] = None
+    score: float
+    explanation: str
+
+
+# ---------------------------------------------------------------------------
+# /recommend/single (internal contract, used by batch + ab_test)
 # ---------------------------------------------------------------------------
 
 class RecommendRequest(BaseModel):
@@ -22,20 +34,13 @@ class RecommendResponse(BaseModel):
     genre: Optional[str]
     model_name: str
     scoring_method: str
-    movie_ids: list[int]
-    scores: list[float]
     source: Literal["precomputed", "realtime"]
+    recommendations: list[RecommendedMovie]
 
 
 # ---------------------------------------------------------------------------
-# /recommend (multi-architecture)
+# /recommend (multi-architecture, fans out over the registry)
 # ---------------------------------------------------------------------------
-
-class RecommendedMovie(BaseModel):
-    movie_id: int
-    score: float
-    explanation: str
-
 
 class ArchitectureResult(BaseModel):
     model_name: str
@@ -59,6 +64,18 @@ class MultiArchRecommendResponse(BaseModel):
     genre: Optional[str]
     scoring_method: str
     results: list[ArchitectureResult]
+
+
+# ---------------------------------------------------------------------------
+# /recommend/cold_start (new-user profile — genre weights and/or favorite movies)
+# ---------------------------------------------------------------------------
+
+class ColdStartProfileRequest(BaseModel):
+    genre_weights: dict[str, float] = Field(default_factory=dict)
+    favorite_movie_ids: list[int] = Field(default_factory=list)
+    scoring_method: Literal["cosine", "dot", "l2", "learned"] = "cosine"
+    top_n: int = Field(default=10, ge=1, le=100)
+    architectures: list[str] | Literal["all"] = "all"
 
 
 # ---------------------------------------------------------------------------
